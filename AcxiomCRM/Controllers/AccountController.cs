@@ -1,0 +1,14 @@
+using AcxiomCRM.Models; using AcxiomCRM.Services; using Microsoft.AspNetCore.Identity; using Microsoft.AspNetCore.Mvc; using System.ComponentModel.DataAnnotations;
+namespace AcxiomCRM.Controllers;
+public class AccountController : Controller {
+ private readonly SignInManager<ApplicationUser> _signIn; private readonly UserManager<ApplicationUser> _users; private readonly IAuditService _audit;
+ public AccountController(SignInManager<ApplicationUser> signIn,UserManager<ApplicationUser> users,IAuditService audit){_signIn=signIn;_users=users;_audit=audit;}
+ [HttpGet] public IActionResult Login(string? returnUrl=null){ViewBag.ReturnUrl=returnUrl;return View();}
+ [HttpPost,ValidateAntiForgeryToken] public async Task<IActionResult> Login(LoginVm vm,string? returnUrl=null){if(!ModelState.IsValid)return View(vm); var user=await _users.FindByEmailAsync(vm.Email); if(user==null||!user.IsActive){await _audit.WriteAsync("Failed Login","Authentication",vm.Email,result:"Failed");ModelState.AddModelError("","Invalid credentials or inactive account.");return View(vm);} var r=await _signIn.PasswordSignInAsync(user,vm.Password,vm.RememberMe,true); await _audit.WriteAsync(r.Succeeded?"Login":"Failed Login","Authentication",user.Id,result:r.Succeeded?"Success":"Failed"); if(r.Succeeded)return Url.IsLocalUrl(returnUrl)?Redirect(returnUrl!):RedirectToAction("Index","Dashboard"); ModelState.AddModelError("",r.IsLockedOut?"Account temporarily locked. Try again later.":"Invalid login attempt.");return View(vm);}
+ [HttpGet] public IActionResult Register()=>View(new RegisterVm());
+ [HttpPost,ValidateAntiForgeryToken] public async Task<IActionResult> Register(RegisterVm vm){if(!ModelState.IsValid)return View(vm); var user=new ApplicationUser{UserName=vm.Email,Email=vm.Email,FullName=vm.FullName,EmailConfirmed=true};var r=await _users.CreateAsync(user,vm.Password);if(r.Succeeded){await _users.AddToRoleAsync(user,"SalesExecutive");await _audit.WriteAsync("Register","Authentication",user.Id);await _signIn.SignInAsync(user,false);return RedirectToAction("Index","Dashboard");}foreach(var e in r.Errors)ModelState.AddModelError("",e.Description);return View(vm);}
+ [HttpPost,AuthorizeForPost,ValidateAntiForgeryToken] public async Task<IActionResult> Logout(){await _audit.WriteAsync("Logout","Authentication");await _signIn.SignOutAsync();return RedirectToAction("Login");}
+ public IActionResult AccessDenied()=>View();
+}
+public class LoginVm { [Required,EmailAddress] public string Email{get;set;}="";[Required,DataType(DataType.Password)] public string Password{get;set;}="";public bool RememberMe{get;set;} }
+public class RegisterVm { [Required,StringLength(120)] public string FullName{get;set;}="";[Required,EmailAddress] public string Email{get;set;}="";[Required,MinLength(8),DataType(DataType.Password)] public string Password{get;set;}="";[Required,Compare(nameof(Password)),DataType(DataType.Password)] public string ConfirmPassword{get;set;}=""; }
